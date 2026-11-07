@@ -68,7 +68,7 @@ test('a started subagent is listed in the pane and named in the banner', async (
   await onMain.unmount()
 })
 
-test('a subagent that drops out of the engine list stays as completed', async ($, on) => {
+test('a subagent that finishes leaves the pane', async ($, on) => {
   let live = [REVIEWER]
   const clock = mock.clock(on, { now: 1_000_000 })
   on('command.register', () => ({ value: { command: 'agents-sidebar' } }))
@@ -81,8 +81,7 @@ test('a subagent that drops out of the engine list stays as completed', async ($
   await $.command.run({ command: 'agents-sidebar', args: '' })
 
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  const row = await pane.find({ type: 'Text', text: /Review the diff/ })
-  expect(row?.text).toContain('completed')
+  expect(await pane.find({ type: 'Text', text: /Review the diff/ })).toBeUndefined()
   await pane.unmount()
 })
 
@@ -297,7 +296,7 @@ test('test results show for a normal run and for a background run', async ($, on
   await pane.unmount()
 })
 
-test('a finished agent shows the first line of its answer', async ($, on) => {
+test('a finished agent in view shows the first line of its answer', async ($, on) => {
   const live = [{ ...REVIEWER, status: 'completed' }]
   standardEngine(on, live)
   on('turn.complete', () => ({ text: '' }))
@@ -305,7 +304,7 @@ test('a finished agent shows the first line of its answer', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.turn.complete({ turnId: 't1', answer: '3 blockers found in the review\nDetails follow', durationMs: 10, isAborted: false, agentId: 'agent-1' } as never)
 
-  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const pane = await $.ui.mount({ ...PANE, props: { ...PANE.props, view: { agentId: 'agent-1' } }, surface: 'terminal' })
   expect((await pane.find({ type: 'Text', text: /→/ }))?.text).toContain('3 blockers found in the review')
   await pane.unmount()
 })

@@ -34,6 +34,11 @@ function isEnded(status: string): boolean {
   return ENDED.includes(status)
 }
 
+// A finished agent leaves the pane at once; its toast already said how it ended. One in view stays until left.
+function isStillShown(row: AgentRow, viewedAgentId: string | undefined): boolean {
+  return !isEnded(row.status) || row.id === viewedAgentId
+}
+
 function isSettled(status: string): boolean {
   return SETTLED.includes(status)
 }
@@ -694,7 +699,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    const rows = await read($, agents)
+    const storedRows = await read($, agents)
     const backgroundTasks = await read($, tasks)
     const cwd = await read($, sessionCwd)
     const runsInFlight = await read($, heavyRuns)
@@ -702,6 +707,7 @@ export const register: Register = on => {
     await read($, clock)
     const now = await $.clock.now()
     const viewedAgentId = e.props.view.agentId
+    const rows = storedRows.filter(row => isStillShown(row, viewedAgentId))
 
     const runningCount = rows.filter(row => !isEnded(row.status)).length
     const doneCount = rows.filter(row => row.status === 'completed').length
