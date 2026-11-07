@@ -8,13 +8,15 @@ Plugins and setup tips for Claude Code, shared from my own setup.
 
 Keeps track of the subagents in a session and makes it obvious which agent you are talking to.
 
-- **Agents pane on the right.** Lists every subagent of the session, newest first. It opens by itself when the first subagent starts, or with `/agents-sidebar`. Click a row to switch to that agent, or "Main agent" to switch back. A totals line at the top counts running, done and failed agents. Each row shows:
-  - the agent type, how long it has run (or took) and its model
+- **Agents pane on the right.** Lists every subagent of the session as a tree: an agent started by another agent is indented under it. It opens by itself when the first subagent starts, or with `/agents-sidebar`. Click a row to switch to that agent, or "Main agent" to switch back. A totals line at the top counts running, done and failed agents. Each row shows:
+  - the agent type, what it is doing (testing, building, editing, reading, browsing, git, shell, thinking, ...), how long it has run (or took) and its model
   - its status and task
-  - what it is doing now, such as `Bash: dotnet test`
+  - the folder or worktree it works in, when that is not the session's own folder
+  - its latest tool call, such as `now: Bash: dotnet test`
   - the skills it used, such as `skills: code-review ×2, precommit`
   - `⚠ quiet 3m` in orange when a running agent has made no tool call or model reply for 3 minutes
   - `⚠ still open 6m` when it finished or went idle but was never closed
+- **Background commands.** A "Background" section lists the commands and monitors running in the background, from the main agent or any subagent, with what they do (testing, building, watching, ...), how long they have run and which agent started them. A finished one stays for 2 minutes with ✓ or ✗.
 - **Yellow warning banner.** While a subagent's transcript is in view, a yellow banner above the prompt says so, because your next message then goes to that subagent and not to the main agent. It has a "Back to main" button.
 - **Finish notices.** A short pop-up when a subagent finishes or fails.
 - **Reminders to close finished subagents.** When a subagent has been finished or idle for 5 minutes but is still open, the main agent's next tool result carries a note (which you do not see) naming it and asking it to stop the agent with TaskStop unless it still needs it. The note repeats at most every 10 minutes per agent.

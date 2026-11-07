@@ -153,3 +153,72 @@ test('a pop-up says when a subagent finishes', async ($, on) => {
 
   expect(toasts).toContain('✓ code-reviewer finished: Review the diff')
 })
+
+test('an agent row shows its activity and the worktree it works in', async ($, on) => {
+  mock.clock(on, { now: 1_000_000 })
+  on('command.register', () => ({ value: { command: 'agents-sidebar' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('agent.list', () => ({ value: [REVIEWER] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  let release = () => {}
+  on('tool.call', () => new Promise(resolve => (release = () => resolve({ result: {} }))))
+
+  await $.session.start({ cwd: '/home/me/repo', surface: 'terminal', isInteractive: true })
+  const running = $.tool.call({
+    tool: 'Bash',
+    command: 'cd /home/me/repo/.claude/worktrees/feature-x && dotnet test',
+    agentId: 'agent-1',
+  })
+  await new Promise(resolve => setTimeout(resolve, 20))
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await pane.find({ key: 'view-agent-1' }))?.text).toContain('· testing ·')
+  expect((await pane.find({ type: 'Text', text: /folder:/ }))?.text).toContain('.claude/worktrees/feature-x')
+  await pane.unmount()
+  release()
+  await running
+})
+
+test('an agent started by another agent is shown under it', async ($, on) => {
+  mock.clock(on, { now: 1_000_000 })
+  const child = { id: 'agent-2', type: 'Explore', description: 'Find callers', status: 'running', parentId: 'agent-1' }
+  on('command.register', () => ({ value: { command: 'agents-sidebar' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('agent.list', () => ({ value: [REVIEWER, child] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await pane.find({ key: 'view-agent-2' }))?.text).toMatch(/^ {2}└ ● Explore/)
+  expect((await pane.find({ key: 'view-agent-1' }))?.text).toMatch(/^● code-reviewer/)
+  await pane.unmount()
+})
+
+test('a background command is listed while it runs and marked when it ends', async ($, on) => {
+  mock.clock(on, { now: 1_000_000 })
+  on('command.register', () => ({ value: { command: 'agents-sidebar' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('agent.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bash-7' } }))
+  mock.session(on)
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'dotnet test App.slnx', run_in_background: true })
+
+  const running = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await running.find({ type: 'Text', text: /testing ·/ }))?.text).toContain('●')
+  expect(await running.find({ type: 'Text', text: /dotnet test App.slnx/ })).toBeDefined()
+  await running.unmount()
+
+  await $.session.append({
+    message: { type: 'user', content: [{ type: 'text', text: '<task-notification><task-id>bash-7</task-id><status>completed</status></task-notification>' }] },
+    door: 'delivery',
+    origin: { kind: 'task-notification' },
+  } as never)
+
+  const ended = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ended.find({ type: 'Text', text: /testing ·/ }))?.text).toContain('✓')
+  await ended.unmount()
+})
