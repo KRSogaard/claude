@@ -8,7 +8,7 @@
     {
       "name": "agent-sidebar",
       "source": "./plugins/agent-sidebar",
-      "description": "Subagents in a right-hand pane, and a yellow banner while a subagent is in view"
+      "description": "Subagents in a right-hand pane with their skills, activity and time; a yellow banner while a subagent is in view; reminders to close finished subagents"
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
   "name": "agent-sidebar",
-  "version": "0.1.0",
-  "description": "Subagents in a right-hand pane, and a yellow banner while a subagent is in view",
+  "version": "0.2.0",
+  "description": "Subagents in a right-hand pane with their skills, activity and time; a yellow banner while a subagent is in view; reminders to close finished subagents",
   "types": "./types/index.d.ts",
   "license": "MIT",
   "author": {
