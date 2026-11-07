@@ -1,0 +1,14 @@
+#!/usr/bin/env node
+// Prints the signed-in Claude account's full email as a claude-hud --extra-cmd label.
+const fs = require('fs')
+const path = require('path')
+const os = require('os')
+const configDir = process.env.CLAUDE_CONFIG_DIR
+const file = configDir ? path.join(configDir, '.claude.json') : path.join(os.homedir(), '.claude.json')
+try {
+  const account = JSON.parse(fs.readFileSync(file, 'utf8')).oauthAccount || {}
+  const label = account.emailAddress || account.displayName || ''
+  process.stdout.write(JSON.stringify({ label }))
+} catch {
+  process.stdout.write(JSON.stringify({ label: '' }))
+}

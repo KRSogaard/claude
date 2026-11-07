@@ -37,20 +37,18 @@ In the desktop app: click + next to the prompt box, then Plugins, Add marketplac
 
 ## Setup tips
 
-### Show the account name in claude-hud
+### Show the full account email in claude-hud
 
-[claude-hud](https://github.com/jarrodwatts/claude-hud) can show who you are signed in as, but it is off by default. Create `~/.claude/plugins/claude-hud/config.json`:
+[claude-hud](https://github.com/jarrodwatts/claude-hud) can show who you are signed in as (`showAuthUser`), but only the part of the email before the @. To show the full email instead, use its `--extra-cmd` option with [`scripts/claude-hud-account`](scripts/claude-hud-account), which prints the email from `~/.claude.json`:
 
-```json
-{
-  "display": {
-    "showAuthUser": true,
-    "authUserLength": 0
-  }
-}
-```
+1. Copy the script to `~/.local/bin/claude-hud-account` and make it executable (`chmod +x`). It needs Node.js.
+2. In the `statusLine` command in `~/.claude/settings.json`, put `CLAUDE_HUD_ALLOW_EXTRA_CMD=1` in front of the `node .../dist/index.js` call and `--extra-cmd ~/.local/bin/claude-hud-account` after it:
 
-`authUserLength: 0` shows the full name instead of cutting it at 8 characters.
+   ```
+   CLAUDE_HUD_ALLOW_EXTRA_CMD=1 exec node "${plugin_dir}dist/index.js" --extra-cmd ~/.local/bin/claude-hud-account
+   ```
+
+3. Leave `showAuthUser` off in `~/.claude/plugins/claude-hud/config.json`, so the name does not show twice.
 
 ## Developing
 
