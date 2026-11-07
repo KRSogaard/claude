@@ -1,0 +1,10 @@
+{
+  "name": "agent-sidebar",
+  "version": "0.1.0",
+  "description": "Subagents in a right-hand pane, and a yellow banner while a subagent is in view",
+  "types": "./types/index.d.ts",
+  "license": "MIT",
+  "author": {
+    "name": "Kasper Sogaard"
+  }
+}
