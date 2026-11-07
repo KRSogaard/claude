@@ -222,3 +222,103 @@ test('a background command is listed while it runs and marked when it ends', asy
   expect((await ended.find({ type: 'Text', text: /testing ·/ }))?.text).toContain('✓')
   await ended.unmount()
 })
+
+const EXPLORER = { id: 'agent-2', type: 'Explore', description: 'Fix callers', status: 'running' }
+
+function standardEngine(on: Parameters<Parameters<typeof test>[1]>[1], live: unknown[]) {
+  mock.clock(on, { now: 1_000_000 })
+  mock.session(on)
+  on('command.register', () => ({ value: { command: 'agents-sidebar' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('agent.list', () => ({ value: live }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+}
+
+test('two running agents editing the same file are flagged on both rows', async ($, on) => {
+  standardEngine(on, [REVIEWER, EXPLORER])
+  on('tool.call', () => ({ result: {} }))
+
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/Lease.cs', old_string: 'a', new_string: 'b', agentId: 'agent-1' })
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/Lease.cs', old_string: 'b', new_string: 'c', agentId: 'agent-2' })
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await pane.find({ type: 'Text', text: /files:/ }))?.text).toContain('Lease.cs')
+  expect((await pane.find({ type: 'Text', text: /same file as Explore/ }))?.text).toContain('Lease.cs')
+  expect((await pane.find({ type: 'Text', text: /same file as code-reviewer/ }))?.text).toContain('Lease.cs')
+  await pane.unmount()
+})
+
+test('three builds or tests at once raise the memory warning', async ($, on) => {
+  standardEngine(on, [])
+  let id = 0
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: `bash-${++id}` } }))
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'dotnet build A.slnx', run_in_background: true })
+  await $.tool.call({ tool: 'Bash', command: 'dotnet test B.slnx', run_in_background: true })
+
+  const two = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await two.find({ type: 'Text', text: /memory risk/ })).toBeUndefined()
+  await two.unmount()
+
+  await $.tool.call({ tool: 'Bash', command: 'dotnet test C.slnx', run_in_background: true })
+  const three = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await three.find({ type: 'Text', text: /memory risk/ }))?.text).toContain('3 builds/tests at once')
+  await three.unmount()
+})
+
+test('test results show for a normal run and for a background run', async ($, on) => {
+  standardEngine(on, [REVIEWER])
+  on('fs.read', () => ({ value: 'Failed!  - Failed:     3, Passed:   412, Skipped:     0, Total:   415, Duration: 9 s' }))
+  on('tool.call', (_, e) =>
+    (e as unknown as { run_in_background?: boolean }).run_in_background === true
+      ? { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bash-9' } }
+      : { result: { stdout: 'Passed!  - Failed:     0, Passed:    40, Skipped:     0, Total:    40', stderr: '', interrupted: false } },
+  )
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'dotnet test Unit.slnx', agentId: 'agent-1' })
+  await $.tool.call({ tool: 'Bash', command: 'dotnet test All.slnx', run_in_background: true })
+  await $.session.append({
+    message: {
+      type: 'user',
+      content: [{ type: 'text', text: '<task-notification><task-id>bash-9</task-id><output-file>/tmp/bash-9.output</output-file><status>completed</status></task-notification>' }],
+    },
+    door: 'delivery',
+    origin: { kind: 'task-notification' },
+  } as never)
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const results = (await pane.findAll({ type: 'Text', text: /tests:/ })).map(found => found.text)
+  expect(results.some(text => text.includes('✓ 40 passed'))).toBe(true)
+  expect(results.some(text => text.includes('✗ 3 failed of 415'))).toBe(true)
+  await pane.unmount()
+})
+
+test('a finished agent shows the first line of its answer', async ($, on) => {
+  const live = [{ ...REVIEWER, status: 'completed' }]
+  standardEngine(on, live)
+  on('turn.complete', () => ({ text: '' }))
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.turn.complete({ turnId: 't1', answer: '3 blockers found in the review\nDetails follow', durationMs: 10, isAborted: false, agentId: 'agent-1' } as never)
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await pane.find({ type: 'Text', text: /→/ }))?.text).toContain('3 blockers found in the review')
+  await pane.unmount()
+})
+
+test('a background server is listed with its port', async ($, on) => {
+  standardEngine(on, [])
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bash-5' } }))
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'dotnet run --project Api --urls http://localhost:8123', run_in_background: true })
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await pane.find({ type: 'Text', text: /server :8123/ }))?.text).toContain('●')
+  expect(await pane.find({ type: 'Text', text: /memory risk/ })).toBeUndefined()
+  await pane.unmount()
+})

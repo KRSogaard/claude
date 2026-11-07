@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRow, BackgroundTask, SkillUse } from '../types'
+import type { AgentRow, BackgroundTask, MainAgent, SkillUse, TestResult } from '../types'
 
 const PANE = 'agent-sidebar'
 const TITLE = 'Agents'
@@ -13,13 +13,20 @@ const QUIET_AFTER_MS = 3 * 60 * 1000
 const STALE_AFTER_MS = 5 * 60 * 1000
 const REMIND_AGAIN_AFTER_MS = 10 * 60 * 1000
 const SHOW_ENDED_TASK_FOR_MS = 2 * 60 * 1000
+const HEAVY_RUN_LIMIT = 3
+const MAX_FILES = 50
+const EDIT_TOOLS = ['Edit', 'Write', 'NotebookEdit']
+const HEAVY_COMMAND = /\bdotnet\s+(build|test|run|publish|restore)\b|\bgd-test\b/
+const SERVER_PORT = /(?:--urls?[= ]\S*?:|--port[= ]|\s-p\s+|PORT=|localhost:|127\.0\.0\.1:|0\.0\.0\.0:)(\d{2,5})\b/i
 const ACTIVITY_FIELDS = ['skill', 'command', 'file_path', 'pattern', 'url', 'query', 'description', 'prompt']
 const PATH_FIELDS = ['file_path', 'path', 'notebook_path', 'command', 'cwd']
 const WORKTREE_PATH = /(\/[^\s'"`;|&]*?\/(?:\.claude\/worktrees|worktrees)\/[^/\s'"`;|&]+)/
 
 // Change a tag when its type changes: it declines what an earlier version stored.
-const agents = atom({ plugin: 'agent-sidebar', key: 'agents' } as const, [], { shape: 'agents-4' })
-const tasks = atom({ plugin: 'agent-sidebar', key: 'tasks' } as const, [], { shape: 'tasks-1' })
+const agents = atom({ plugin: 'agent-sidebar', key: 'agents' } as const, [], { shape: 'agents-5' })
+const tasks = atom({ plugin: 'agent-sidebar', key: 'tasks' } as const, [], { shape: 'tasks-2' })
+const heavyRuns = atom({ plugin: 'agent-sidebar', key: 'heavyRuns' } as const, [], { shape: 'heavy-1' })
+const main = atom({ plugin: 'agent-sidebar', key: 'main' } as const, { files: [] } as MainAgent, { shape: 'main-1' })
 const clock = atom({ plugin: 'agent-sidebar', key: 'clock' } as const, 0)
 const sessionCwd = atom({ plugin: 'agent-sidebar', key: 'sessionCwd' } as const, '')
 
@@ -224,13 +231,95 @@ function textOf(content: unknown): string {
   return JSON.stringify(content ?? '')
 }
 
-function endedTaskIn(text: string): { id: string; status: string } | undefined {
+function endedTaskIn(text: string): { id: string; status: string; outputFile?: string } | undefined {
   const id = /<task-id>([^<]+)<\/task-id>/.exec(text)?.[1]
   const status = /<status>([^<]+)<\/status>/.exec(text)?.[1]
+  const outputFile = /<output-file>([^<]+)<\/output-file>/.exec(text)?.[1]
   if (id === undefined || status === undefined || !isEnded(status.trim())) {
     return undefined
   }
-  return { id: id.trim(), status: status.trim() }
+  return { id: id.trim(), status: status.trim(), outputFile: outputFile?.trim() }
+}
+
+function isHeavyCommand(command: string): boolean {
+  return HEAVY_COMMAND.test(command)
+}
+
+function serverPort(command: string): number | undefined {
+  const found = SERVER_PORT.exec(command)
+  if (found === null || found[1] === undefined) {
+    return undefined
+  }
+  const port = Number(found[1])
+  return Number.isFinite(port) ? port : undefined
+}
+
+function addTotals(sum: TestResult | undefined, failed: number, passed: number, total: number): TestResult {
+  const base = sum ?? { passed: 0, failed: 0, total: 0 }
+  return { passed: base.passed + passed, failed: base.failed + failed, total: base.total + total }
+}
+
+function parseTestSummary(output: string): TestResult | undefined {
+  let sum: TestResult | undefined
+  const vstest = /(?:Passed|Failed)!\s*-\s*Failed:\s*(\d+),\s*Passed:\s*(\d+),\s*Skipped:\s*(\d+),\s*Total:\s*(\d+)/g
+  for (const match of output.matchAll(vstest)) {
+    sum = addTotals(sum, Number(match[1]), Number(match[2]), Number(match[4]))
+  }
+  if (sum !== undefined) {
+    return sum
+  }
+  const summary = /Test summary:\s*total:\s*(\d+),\s*failed:\s*(\d+),\s*succeeded:\s*(\d+)/gi
+  for (const match of output.matchAll(summary)) {
+    sum = addTotals(sum, Number(match[2]), Number(match[3]), Number(match[1]))
+  }
+  return sum
+}
+
+function formatTests(tests: TestResult): string {
+  if (tests.failed > 0) {
+    return `✗ ${tests.failed} failed of ${tests.total}`
+  }
+  return `✓ ${tests.passed} passed`
+}
+
+function shellOutput(result: unknown): string {
+  if (typeof result !== 'object' || result === null) {
+    return ''
+  }
+  const record = result as Record<string, unknown>
+  const stdout = typeof record['stdout'] === 'string' ? record['stdout'] : ''
+  const stderr = typeof record['stderr'] === 'string' ? record['stderr'] : ''
+  return `${stdout}\n${stderr}`
+}
+
+function fileName(path: string): string {
+  return path.split('/').pop() ?? path
+}
+
+function formatFiles(files: string[]): string {
+  const shown = files.slice(-3).map(fileName).join(', ')
+  const more = files.length > 3 ? ` (+${files.length - 3})` : ''
+  return shown + more
+}
+
+function addFile(files: string[], path: string): string[] {
+  return [...files.filter(one => one !== path), path].slice(-MAX_FILES)
+}
+
+function sharedFiles(row: AgentRow, rows: AgentRow[], mainFiles: string[]): { file: string; with: string }[] {
+  if (isEnded(row.status)) {
+    return []
+  }
+  const shared: { file: string; with: string }[] = []
+  for (const file of row.files) {
+    const other = rows.find(one => one.id !== row.id && !isEnded(one.status) && one.files.includes(file))
+    if (other !== undefined) {
+      shared.push({ file, with: other.type })
+    } else if (mainFiles.includes(file)) {
+      shared.push({ file, with: 'main agent' })
+    }
+  }
+  return shared
 }
 
 function orderAsTree(rows: AgentRow[]): { row: AgentRow; depth: number }[] {
@@ -290,6 +379,7 @@ async function refreshAgents($: EngineInterface): Promise<AgentRow[]> {
         parentId: agent.parentId,
         name: agent.name,
         skills: [],
+        files: [],
         toolsInFlight: 0,
         isListed: true,
         settledAt: isSettled(agent.status) ? now : undefined,
@@ -353,10 +443,15 @@ async function trackBackgroundTask(
   const isMonitor = tool === 'Monitor'
   const command = typeof input['command'] === 'string' ? (input['command'] as string) : ''
   const description = typeof input['description'] === 'string' ? (input['description'] as string) : ''
+  const port = isMonitor ? undefined : serverPort(command)
+  const kind = isMonitor ? 'monitor' : port !== undefined ? 'server' : 'shell'
+  const activity = isMonitor ? 'watching' : port !== undefined ? `server :${port}` : shellActivity(command)
   const task: BackgroundTask = {
     id,
-    kind: isMonitor ? 'monitor' : 'shell',
-    activity: isMonitor ? 'watching' : shellActivity(command),
+    kind,
+    port,
+    isHeavy: !isMonitor && port === undefined && isHeavyCommand(command),
+    activity,
     label: firstLine(isMonitor ? description || command : command || description),
     ownerAgentId,
     status: 'running',
@@ -365,11 +460,95 @@ async function trackBackgroundTask(
   await update($, tasks, list => [...list.filter(one => one.id !== id), task].slice(-MAX_TASKS))
 }
 
-async function endBackgroundTask($: EngineInterface, id: string, status: string) {
+async function endBackgroundTask($: EngineInterface, id: string, status: string, outputFile: string | undefined) {
   const now = await $.clock.now()
+  const task = (await read($, tasks)).find(one => one.id === id)
+  const tests = task !== undefined && task.activity === 'testing' ? await readTestResult($, outputFile) : undefined
   await update($, tasks, list =>
-    list.map(task => (task.id === id && !isEnded(task.status) ? { ...task, status, endedAt: now } : task)),
+    list.map(one => (one.id === id && !isEnded(one.status) ? { ...one, status, endedAt: now, tests } : one)),
   )
+  if (tests !== undefined && task?.ownerAgentId !== undefined) {
+    await changeAgent($, task.ownerAgentId, row => ({ ...row, tests }))
+  }
+  if (tests !== undefined && task !== undefined && task.ownerAgentId === undefined) {
+    await update($, main, current => ({ ...current, tests }))
+  }
+}
+
+async function readTestResult($: EngineInterface, outputFile: string | undefined): Promise<TestResult | undefined> {
+  if (outputFile === undefined) {
+    return undefined
+  }
+  try {
+    return parseTestSummary(await $.fs.read(outputFile))
+  } catch {
+    return undefined
+  }
+}
+
+async function startHeavyRun($: EngineInterface, id: string, command: string, agentId: string | undefined) {
+  if (!isHeavyCommand(command)) {
+    return
+  }
+  await update($, heavyRuns, list => [...list.filter(one => one.id !== id), { id, label: firstLine(command), agentId }])
+}
+
+async function endHeavyRun($: EngineInterface, id: string) {
+  const list = await read($, heavyRuns)
+  if (list.some(one => one.id === id)) {
+    await update($, heavyRuns, current => current.filter(one => one.id !== id))
+  }
+}
+
+async function recordShellResult($: EngineInterface, command: string, result: unknown, agentId: string | undefined) {
+  if (shellActivity(command) !== 'testing') {
+    return
+  }
+  const tests = parseTestSummary(shellOutput(result))
+  if (tests === undefined) {
+    return
+  }
+  if (agentId === undefined) {
+    await update($, main, current => ({ ...current, tests }))
+    return
+  }
+  await changeAgent($, agentId, row => ({ ...row, tests }))
+}
+
+async function recordEditedFile($: EngineInterface, path: string, agentId: string | undefined) {
+  const before = await read($, agents)
+  const mainBefore = await read($, main)
+  if (agentId === undefined) {
+    await update($, main, current => ({ ...current, files: addFile(current.files, path) }))
+  } else {
+    await changeAgent($, agentId, row => ({ ...row, files: addFile(row.files, path) }))
+  }
+  const editor = agentId === undefined ? 'main agent' : before.find(row => row.id === agentId)?.type ?? 'an agent'
+  const otherEditor = before.find(row => row.id !== agentId && !isEnded(row.status) && row.files.includes(path))
+  const isMainOther = agentId !== undefined && mainBefore.files.includes(path)
+  const isNewClash = otherEditor !== undefined || isMainOther
+  const wasEditedByThisOneBefore =
+    agentId === undefined ? mainBefore.files.includes(path) : before.find(row => row.id === agentId)?.files.includes(path) === true
+  if (isNewClash && !wasEditedByThisOneBefore) {
+    const other = otherEditor === undefined ? 'main agent' : otherEditor.type
+    $.ui.toast(`⚠ ${editor} and ${other} both edited ${fileName(path)}`)
+  }
+}
+
+async function recordToolResult(
+  $: EngineInterface,
+  tool: string,
+  input: Record<string, unknown>,
+  result: unknown,
+  agentId: string | undefined,
+) {
+  if (tool === 'Bash' && input['run_in_background'] !== true) {
+    await recordShellResult($, String(input['command'] ?? ''), result, agentId)
+  }
+  const path = input['file_path'] ?? input['notebook_path']
+  if (EDIT_TOOLS.includes(tool) && typeof path === 'string') {
+    await recordEditedFile($, path, agentId)
+  }
 }
 
 async function openPane($: EngineInterface) {
@@ -427,9 +606,20 @@ export const register: Register = on => {
     const input = e as unknown as Record<string, unknown>
     const agentId = e.agentId
     if (agentId === undefined) {
-      const ran = await next(e)
+      const command = e.tool === 'Bash' ? String(input['command'] ?? '') : ''
+      const isForeground = e.tool === 'Bash' && input['run_in_background'] !== true
+      if (isForeground) {
+        await startHeavyRun($, e.tool_use_id, command, undefined)
+      }
+      let ran
+      try {
+        ran = await next(e)
+      } finally {
+        await endHeavyRun($, e.tool_use_id)
+      }
       if (ran.deny === undefined) {
         await trackBackgroundTask($, e.tool, input, ran.result, undefined)
+        await recordToolResult($, e.tool, input, ran.result, undefined)
       }
       return remindAboutStaleAgents($, ran)
     }
@@ -447,13 +637,19 @@ export const register: Register = on => {
       toolsInFlight: row.toolsInFlight + 1,
       lastActiveAt: now,
     }))
+    const command = e.tool === 'Bash' ? String(input['command'] ?? '') : ''
+    if (e.tool === 'Bash' && input['run_in_background'] !== true) {
+      await startHeavyRun($, e.tool_use_id, command, agentId)
+    }
     try {
       const ran = await next(e)
       if (ran.deny === undefined) {
         await trackBackgroundTask($, e.tool, input, ran.result, agentId)
+        await recordToolResult($, e.tool, input, ran.result, agentId)
       }
       return ran
     } finally {
+      await endHeavyRun($, e.tool_use_id)
       await changeAgent($, agentId, (row, now) => ({
         ...row,
         toolsInFlight: Math.max(0, row.toolsInFlight - 1),
@@ -474,8 +670,13 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (e.agentId !== undefined) {
+    const agentId = e.agentId
+    if (agentId !== undefined) {
       await refreshAgents($)
+      const answer = firstLine(e.answer ?? '')
+      if (answer !== '') {
+        await changeAgent($, agentId, row => ({ ...row, answer }))
+      }
     }
     return result
   })
@@ -485,7 +686,7 @@ export const register: Register = on => {
     if (e.origin.kind === 'task-notification') {
       const ended = endedTaskIn(textOf(e.message.content))
       if (ended !== undefined) {
-        await endBackgroundTask($, ended.id, ended.status)
+        await endBackgroundTask($, ended.id, ended.status, ended.outputFile)
       }
     }
     return stored
@@ -496,6 +697,8 @@ export const register: Register = on => {
     const rows = await read($, agents)
     const backgroundTasks = await read($, tasks)
     const cwd = await read($, sessionCwd)
+    const runsInFlight = await read($, heavyRuns)
+    const mainAgent = await read($, main)
     await read($, clock)
     const now = await $.clock.now()
     const viewedAgentId = e.props.view.agentId
@@ -503,6 +706,7 @@ export const register: Register = on => {
     const runningCount = rows.filter(row => !isEnded(row.status)).length
     const doneCount = rows.filter(row => row.status === 'completed').length
     const failedCount = rows.filter(row => row.status === 'failed' || row.status === 'killed').length
+    const heavyCount = runsInFlight.length + backgroundTasks.filter(task => task.isHeavy && !isEnded(task.status)).length
     const shownTasks = backgroundTasks
       .filter(task => !isEnded(task.status) || now - (task.endedAt ?? now) < SHOW_ENDED_TASK_FOR_MS)
       .reverse()
@@ -512,6 +716,11 @@ export const register: Register = on => {
         <Text bold wrap="truncate-end">
           {runningCount} running · {doneCount} done · {failedCount} failed
         </Text>
+        {heavyCount >= HEAVY_RUN_LIMIT && (
+          <Text color="#ff8800" bold wrap="truncate-end">
+            ⚠ {heavyCount} builds/tests at once (limit {HEAVY_RUN_LIMIT}): memory risk
+          </Text>
+        )}
         {shownTasks.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>Background</Text>
@@ -529,6 +738,12 @@ export const register: Register = on => {
                     {'   '}
                     {task.label}
                   </Text>
+                  {task.tests !== undefined && (
+                    <Text color={task.tests.failed > 0 ? 'red' : 'green'} wrap="truncate-end">
+                      {'   tests: '}
+                      {formatTests(task.tests)}
+                    </Text>
+                  )}
                 </Box>
               )
             })}
@@ -542,6 +757,12 @@ export const register: Register = on => {
             onPress={() => $.ui.view({})}
           />
         </Box>
+        {mainAgent.tests !== undefined && (
+          <Text color={mainAgent.tests.failed > 0 ? 'red' : 'green'} wrap="truncate-end">
+            {'   tests: '}
+            {formatTests(mainAgent.tests)}
+          </Text>
+        )}
         {rows.length === 0 && <Text dimColor>No subagents yet.</Text>}
         {orderAsTree(rows).map(({ row, depth }) => {
           const indent = '  '.repeat(depth)
@@ -557,6 +778,8 @@ export const register: Register = on => {
           const isLongTool = isActive && row.toolsInFlight > 0 && quietFor >= QUIET_AFTER_MS
           const nowLine = row.now === undefined ? undefined : isLongTool ? `${row.now} (${formatDuration(quietFor)})` : row.now
           const stale = staleFor(row, now)
+          const clashes = sharedFiles(row, rows, mainAgent.files)
+          const isSettledOrEnded = !isActive || row.status === 'idle'
           return (
             <Box key={row.id} flexDirection="column" marginTop={1}>
               <Button
@@ -582,6 +805,36 @@ export const register: Register = on => {
                   {pad}
                   {'now: '}
                   {nowLine}
+                </Text>
+              )}
+              {row.files.length > 0 && (
+                <Text wrap="truncate-end">
+                  {pad}
+                  {'files: '}
+                  {formatFiles(row.files)}
+                </Text>
+              )}
+              {clashes.map(clash => (
+                <Text key={'clash-' + row.id + clash.file} color="red" bold wrap="truncate-end">
+                  {pad}
+                  {'⚠ same file as '}
+                  {clash.with}
+                  {': '}
+                  {fileName(clash.file)}
+                </Text>
+              ))}
+              {row.tests !== undefined && (
+                <Text color={row.tests.failed > 0 ? 'red' : 'green'} wrap="truncate-end">
+                  {pad}
+                  {'tests: '}
+                  {formatTests(row.tests)}
+                </Text>
+              )}
+              {isSettledOrEnded && row.answer !== undefined && (
+                <Text dimColor italic wrap="truncate-end">
+                  {pad}
+                  {'→ '}
+                  {row.answer}
                 </Text>
               )}
               {row.skills.length > 0 && (

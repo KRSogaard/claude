@@ -1,7 +1,7 @@
 {
   "name": "agent-sidebar",
-  "version": "0.3.0",
-  "description": "Subagents in a right-hand tree with activity, folder, skills and time; background commands; a yellow banner while a subagent is in view; reminders to close finished subagents",
+  "version": "0.4.0",
+  "description": "Subagents in a right-hand tree with activity, folder, files, tests and answers; background commands and servers; clash and memory warnings; a yellow banner while a subagent is in view; reminders to close finished subagents",
   "types": "./types/index.d.ts",
   "license": "MIT",
   "author": {

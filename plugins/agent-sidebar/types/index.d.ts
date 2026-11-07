@@ -1,5 +1,11 @@
 export type SkillUse = { name: string; count: number }
 
+export type TestResult = { passed: number; failed: number; total: number }
+
+export type HeavyRun = { id: string; label: string; agentId?: string }
+
+export type MainAgent = { files: string[]; tests?: TestResult }
+
 export type AgentRow = {
   id: string
   type: string
@@ -11,6 +17,9 @@ export type AgentRow = {
   folder?: string
   activity?: string
   skills: SkillUse[]
+  files: string[]
+  tests?: TestResult
+  answer?: string
   now?: string
   toolsInFlight: number
   startedAt: number
@@ -23,7 +32,10 @@ export type AgentRow = {
 
 export type BackgroundTask = {
   id: string
-  kind: 'shell' | 'monitor'
+  kind: 'shell' | 'monitor' | 'server'
+  port?: number
+  isHeavy: boolean
+  tests?: TestResult
   activity: string
   label: string
   ownerAgentId?: string
@@ -39,6 +51,8 @@ declare module 'claude-code' {
       tasks: Shaped<BackgroundTask[]>
       clock: number
       sessionCwd: string
+      heavyRuns: Shaped<HeavyRun[]>
+      main: Shaped<MainAgent>
     }
   }
 }

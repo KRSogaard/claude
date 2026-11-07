@@ -13,10 +13,15 @@ Keeps track of the subagents in a session and makes it obvious which agent you a
   - its status and task
   - the folder or worktree it works in, when that is not the session's own folder
   - its latest tool call, such as `now: Bash: dotnet test`
+  - the files it changed, such as `files: Lease.cs, LeaseTests.cs (+2)`
+  - `⚠ same file as Explore: Lease.cs` in red when another running agent (or the main agent) edited the same file, with a pop-up when it first happens
+  - its last test result, such as `tests: ✓ 412 passed` or `tests: ✗ 3 failed of 415` (read from the `dotnet test` summary)
+  - once finished, the first line of its answer, such as `→ 3 blockers found in the review`
   - the skills it used, such as `skills: code-review ×2, precommit`
   - `⚠ quiet 3m` in orange when a running agent has made no tool call or model reply for 3 minutes
   - `⚠ still open 6m` when it finished or went idle but was never closed
-- **Background commands.** A "Background" section lists the commands and monitors running in the background, from the main agent or any subagent, with what they do (testing, building, watching, ...), how long they have run and which agent started them. A finished one stays for 2 minutes with ✓ or ✗.
+- **Background commands.** A "Background" section lists the commands and monitors running in the background, from the main agent or any subagent, with what they do (testing, building, watching, ...), how long they have run and which agent started them. A server started in the background shows its port, such as `server :8123`, until it stops. A finished command stays for 2 minutes with ✓ or ✗, and a test run with its result.
+- **Memory warning.** `⚠ 3 builds/tests at once (limit 3): memory risk` in orange at the top when 3 or more `dotnet build`, `dotnet test`, `dotnet run` or `gd-test` commands run at once across all agents, in the foreground or the background.
 - **Yellow warning banner.** While a subagent's transcript is in view, a yellow banner above the prompt says so, because your next message then goes to that subagent and not to the main agent. It has a "Back to main" button.
 - **Finish notices.** A short pop-up when a subagent finishes or fails.
 - **Reminders to close finished subagents.** When a subagent has been finished or idle for 5 minutes but is still open, the main agent's next tool result carries a note (which you do not see) naming it and asking it to stop the agent with TaskStop unless it still needs it. The note repeats at most every 10 minutes per agent.

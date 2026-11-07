@@ -8,7 +8,7 @@
     {
       "name": "agent-sidebar",
       "source": "./plugins/agent-sidebar",
-      "description": "Subagents in a right-hand tree with activity, folder, skills and time; background commands; a yellow banner while a subagent is in view; reminders to close finished subagents"
+      "description": "Subagents in a right-hand tree with activity, folder, files, tests and answers; background commands and servers; clash and memory warnings; a yellow banner while a subagent is in view; reminders to close finished subagents"
     }
   ]
 }
