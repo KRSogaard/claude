@@ -321,3 +321,29 @@ test('a background server is listed with its port', async ($, on) => {
   expect(await pane.find({ type: 'Text', text: /memory risk/ })).toBeUndefined()
   await pane.unmount()
 })
+
+test('clicking the quiet line asks the main agent whether to close that subagent', async ($, on) => {
+  const submitted: string[] = []
+  const clock = mock.clock(on, { now: 1_000_000 })
+  on('command.register', () => ({ value: { command: 'agents-sidebar' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('agent.list', () => ({ value: [REVIEWER] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('prompt.submit', (_, e) => {
+    submitted.push(e.text)
+    return { text: e.text }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(10 * MINUTE)
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pane.press({ key: 'quiet-agent-1' })
+  await pane.unmount()
+
+  expect(submitted).toHaveLength(1)
+  expect(submitted[0]).toContain('id agent-1')
+  expect(submitted[0]).toContain('safe to close')
+  expect(submitted[0]).toContain('TaskStop')
+})

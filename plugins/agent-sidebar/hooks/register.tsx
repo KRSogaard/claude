@@ -220,6 +220,20 @@ function staleReminder(rows: AgentRow[], now: number): string {
   ].join('\n')
 }
 
+function closeQuietAgentRequest(row: AgentRow, quietFor: number): string {
+  const name = row.name === undefined ? '' : ` (name: ${row.name})`
+  return [
+    `The subagent ${row.type} "${row.description}", id ${row.id}${name}, has been quiet for ${formatDuration(quietFor)}: ${row.status}, no tool running.`,
+    'Is it safe to close? If you are not waiting on its result and will not send it more work, stop it with TaskStop (task_id = its id).',
+    'If it is still needed, leave it running and tell me in one line why.',
+  ].join('\n')
+}
+
+async function askMainAgentToClose($: EngineInterface, row: AgentRow, quietFor: number): Promise<void> {
+  await $.ui.toast(`Asked the main agent whether ${row.type} can be closed`)
+  await $.prompt.submit({ text: closeQuietAgentRequest(row, quietFor) })
+}
+
 function backgroundTaskId(tool: string, result: unknown): string | undefined {
   if (typeof result !== 'object' || result === null) {
     return undefined
@@ -859,11 +873,12 @@ export const register: Register = on => {
                 </Text>
               )}
               {isQuiet && (
-                <Text color="#ff8800" bold wrap="truncate-end">
-                  {pad}
-                  {'⚠ quiet '}
-                  {formatDuration(quietFor)}
-                </Text>
+                <Button
+                  key={'quiet-' + row.id}
+                  plain
+                  label={`${pad}⚠ quiet ${formatDuration(quietFor)} · click to ask main agent to close`}
+                  onPress={() => askMainAgentToClose($, row, quietFor)}
+                />
               )}
             </Box>
           )
