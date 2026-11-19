@@ -25,6 +25,7 @@ Keeps track of the subagents in a session and makes it obvious which agent you a
 - **Yellow warning banner.** While a subagent's transcript is in view, a yellow banner above the prompt says so, because your next message then goes to that subagent and not to the main agent. It has a "Back to main" button.
 - **Finish notices.** A short pop-up when a subagent finishes or fails.
 - **Reminders to close finished subagents.** When a subagent has been finished or idle for 5 minutes but is still open, the main agent's next tool result carries a note (which you do not see) naming it and asking it to stop the agent with TaskStop unless it still needs it. The note repeats at most every 10 minutes per agent.
+- **tmux tab name.** When Claude runs inside tmux, its tab is named after the repo and branch, such as `AgentParley:speaking-mode`, instead of `claude`. The name follows a branch switch or a move into a worktree, and tmux names the tab itself again when the session ends. Outside a git repo the tab shows the folder name.
 
 The pane docks on the right in fullscreen mode (`"tui": "fullscreen"` in settings) when the terminal is at least 110 columns wide; otherwise it shows above the prompt.
 

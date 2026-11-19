@@ -1,7 +1,7 @@
 {
   "name": "agent-sidebar",
-  "version": "0.4.2",
-  "description": "Subagents in a right-hand tree with activity, folder, files, tests and answers; background commands and servers; clash and memory warnings; a yellow banner while a subagent is in view; reminders to close finished subagents",
+  "version": "0.5.0",
+  "description": "Subagents in a right-hand tree with activity, folder, files, tests and answers; background commands and servers; clash and memory warnings; a yellow banner while a subagent is in view; reminders to close finished subagents; names the tmux tab repo:branch",
   "types": "./types/index.d.ts",
   "license": "MIT",
   "author": {

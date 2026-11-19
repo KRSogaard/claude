@@ -347,3 +347,45 @@ test('clicking the quiet line asks the main agent whether to close that subagent
   expect(submitted[0]).toContain('safe to close')
   expect(submitted[0]).toContain('TaskStop')
 })
+
+test('the tmux tab is named repo:branch, follows a branch switch and is handed back at the end', async ($, on) => {
+  mock.clock(on, { now: 1_000_000 })
+  let branch = 'speaking-mode'
+  const tmux: string[][] = []
+  on('env.get', (_, e) => ({ value: e.name === 'TMUX_PANE' ? '%7' : undefined }))
+  on('session.cwd', () => ({ value: '/work/AgentParley-wts/voice' }))
+  on('process.run', (_, e) => {
+    const [cmd, ...args] = e.argv
+    const answer = (exitCode: number, stdout: string) => ({ value: { exitCode, stdout, stderr: '' } })
+    if (cmd === 'tmux') {
+      tmux.push(args)
+      return answer(0, '')
+    }
+    const joined = args.join(' ')
+    if (joined === 'rev-parse --path-format=absolute --git-common-dir') {
+      return answer(0, '/work/AgentParley/.git\n')
+    }
+    if (joined === 'branch --show-current') {
+      return answer(0, `${branch}\n`)
+    }
+    return answer(128, '')
+  })
+  on('command.register', () => ({ value: { command: 'agents-sidebar' } }))
+  on('agent.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.end', (_, e) => ({ sessionId: e.sessionId }))
+  on('tool.call', () => ({ result: {} }))
+
+  await $.session.start({ cwd: '/work/AgentParley-wts/voice', surface: 'terminal', isInteractive: true })
+  expect(tmux).toEqual([['rename-window', '-t', '%7', 'AgentParley:speaking-mode']])
+
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect(tmux.length).toBe(1)
+
+  branch = 'main'
+  await $.tool.call({ tool: 'Bash', command: 'git checkout main' })
+  expect(tmux[1]).toEqual(['rename-window', '-t', '%7', 'AgentParley:main'])
+
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 's1' })
+  expect(tmux[2]).toEqual(['set-option', '-w', '-t', '%7', 'automatic-rename', 'on'])
+})

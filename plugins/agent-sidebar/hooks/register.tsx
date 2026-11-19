@@ -570,6 +570,88 @@ async function recordToolResult(
   }
 }
 
+let lastTabName: string | undefined
+
+async function git($: EngineInterface, cwd: string, args: string[]): Promise<string> {
+  try {
+    const ran = await $.process.run(['git', ...args], { cwd, timeoutMs: 5000 })
+    return ran.exitCode === 0 ? ran.stdout.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+function lastPart(path: string): string {
+  return path.replace(/\/+$/, '').split('/').pop() ?? ''
+}
+
+// The repo's own name, also inside a worktree: the folder that holds its .git.
+function repoNameOf(commonDir: string): string {
+  const name = lastPart(commonDir)
+  if (name === '.git' || name === '.bare') {
+    return lastPart(commonDir.replace(/\/+$/, '').slice(0, -name.length))
+  }
+  return name.replace(/\.git$/, '')
+}
+
+async function tabName($: EngineInterface): Promise<string> {
+  let cwd: string
+  try {
+    cwd = await $.session.cwd()
+  } catch {
+    return ''
+  }
+  const commonDir = await git($, cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+  if (commonDir === '') {
+    return lastPart(cwd)
+  }
+  const branch =
+    (await git($, cwd, ['branch', '--show-current'])) || (await git($, cwd, ['rev-parse', '--short', 'HEAD']))
+  const repo = repoNameOf(commonDir)
+  return branch === '' ? repo : `${repo}:${branch}`
+}
+
+async function tmuxPane($: EngineInterface): Promise<string | undefined> {
+  try {
+    const pane = await $.env.get('TMUX_PANE')
+    return pane === '' ? undefined : pane
+  } catch {
+    return undefined
+  }
+}
+
+async function nameTmuxTab($: EngineInterface) {
+  const pane = await tmuxPane($)
+  if (pane === undefined) {
+    return
+  }
+  const name = await tabName($)
+  if (name === '' || name === lastTabName) {
+    return
+  }
+  try {
+    const ran = await $.process.run(['tmux', 'rename-window', '-t', pane, name], { timeoutMs: 5000 })
+    if (ran.exitCode === 0) {
+      lastTabName = name
+    }
+  } catch {
+    // tmux is gone; the tab keeps its name.
+  }
+}
+
+async function releaseTmuxTab($: EngineInterface) {
+  const pane = await tmuxPane($)
+  if (pane === undefined || lastTabName === undefined) {
+    return
+  }
+  lastTabName = undefined
+  try {
+    await $.process.run(['tmux', 'set-option', '-w', '-t', pane, 'automatic-rename', 'on'], { timeoutMs: 5000 })
+  } catch {
+    // tmux is gone.
+  }
+}
+
 async function openPane($: EngineInterface) {
   await $.ui.open({ id: PANE, title: TITLE })
 }
@@ -595,6 +677,17 @@ export const register: Register = on => {
     if (rows.length > 0) {
       void openPane($)
     }
+    await nameTmuxTab($)
+    return next(e)
+  })
+
+  on('prompt.submit', async ($, e, next) => {
+    await nameTmuxTab($)
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    await releaseTmuxTab($)
     return next(e)
   })
 
@@ -639,6 +732,9 @@ export const register: Register = on => {
       if (ran.deny === undefined) {
         await trackBackgroundTask($, e.tool, input, ran.result, undefined)
         await recordToolResult($, e.tool, input, ran.result, undefined)
+        if (e.tool === 'Bash' || e.tool === 'EnterWorktree' || e.tool === 'ExitWorktree') {
+          await nameTmuxTab($)
+        }
       }
       return remindAboutStaleAgents($, ran)
     }
